@@ -2,6 +2,7 @@
 """用 GitHub REST API 建仓并同步文件，绕开 github.com 网页域名。
 
 可重复运行，内容未变的文件跳过，变化的文件带 sha 更新。
+网络抖动时记录待确认文件并继续，重跑即可补齐。
 token 只从环境变量或本机文件读取，不写入仓库、日志或标准输出。
 """
 
@@ -13,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -52,19 +54,28 @@ def request(method: str, path: str, token: str, payload=None, tolerate=()):
     req = urllib.request.Request(
         API + path, data=data, headers=headers, method=method
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            raw = response.read().decode("utf-8")
+    last_error = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                raw = response.read().decode("utf-8")
             return response.status, (json.loads(raw) if raw else {})
-    except urllib.error.HTTPError as error:
-        if error.code in tolerate:
-            return error.code, {}
-        detail = error.read().decode("utf-8")[:300]
-        raise ApiError(
-            method + " " + path + " 返回 " + str(error.code) + " " + detail
-        ) from error
-    except urllib.error.URLError as error:
-        raise ApiError("网络失败 " + str(error)) from error
+        except urllib.error.HTTPError as error:
+            if error.code in tolerate:
+                return error.code, {}
+            if error.code >= 500 and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            detail = error.read().decode("utf-8")[:300]
+            raise ApiError(
+                method + " " + path + " 返回 " + str(error.code) + " " + detail
+            ) from error
+        except OSError as error:
+            last_error = error
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+    raise ApiError("网络失败 " + str(last_error))
 
 
 def tracked_files() -> list[str]:
@@ -130,28 +141,35 @@ def main(argv=None) -> int:
         print("仓库已存在，跳过创建")
 
     changed = 0
+    pending = []
     for path in files:
-        local_bytes = (ROOT / path).read_bytes()
-        endpoint = "/repos/" + args.owner + "/" + args.repo + "/contents/" + path
-        status, existing = request("GET", endpoint, token, tolerate=(404,))
-        if status == 200 and isinstance(existing, dict):
-            remote_bytes = base64.b64decode(existing.get("content") or "")
-            if remote_bytes == local_bytes:
-                print("未变化", path)
-                continue
-        payload = {
-            "message": "sync " + path,
-            "content": base64.b64encode(local_bytes).decode("ascii"),
-        }
-        if status == 200 and isinstance(existing, dict) and existing.get("sha"):
-            payload["sha"] = existing["sha"]
-        request("PUT", endpoint, token, payload)
-        changed += 1
-        print("已同步", path)
+        try:
+            local_bytes = (ROOT / path).read_bytes()
+            endpoint = "/repos/" + args.owner + "/" + args.repo + "/contents/" + path
+            status, existing = request("GET", endpoint, token, tolerate=(404,))
+            if status == 200 and isinstance(existing, dict):
+                remote_bytes = base64.b64decode(existing.get("content") or "")
+                if remote_bytes == local_bytes:
+                    print("未变化", path)
+                    continue
+            payload = {
+                "message": "sync " + path,
+                "content": base64.b64encode(local_bytes).decode("ascii"),
+            }
+            if status == 200 and isinstance(existing, dict) and existing.get("sha"):
+                payload["sha"] = existing["sha"]
+            request("PUT", endpoint, token, payload)
+            changed += 1
+            print("已同步", path)
+        except ApiError as error:
+            pending.append(path)
+            print("待确认", path, str(error)[:100])
 
     print("本次变更", changed, "个文件")
+    if pending:
+        print("待确认", len(pending), "个文件，网络恢复后重跑脚本即可补齐")
     print("完成 https://github.com/" + args.owner + "/" + args.repo)
-    return 0
+    return 1 if pending else 0
 
 
 if __name__ == "__main__":
