@@ -1,0 +1,7 @@
+state/
+config/settings.json
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
