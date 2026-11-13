@@ -1,12 +1,7 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-build/
-dist/
-.venv/
-venv/
+state/
+config/settings.json
 .env
-runs/
-brief.md
+__pycache__/
+*.pyc
 .DS_Store
-*.log
+.venv/
