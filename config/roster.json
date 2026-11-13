@@ -1,9 +1,10 @@
 {
   "team": "三体 AI 团队",
   "version": "0.1.0",
-  "note": "active 决定本地实际运行的角色数，其余角色保留配置待扩编",
+  "note": "3 人编制为确定形态，维德统筹验收、罗辑资讯、云天明文案。其余角色仅保留命名，不参与执行",
   "active": ["维德", "罗辑", "云天明"],
   "policy": {
+    "final_headcount": 3,
     "executor_self_review": false,
     "human_gate": true,
     "meeting_default_rounds": 1,
