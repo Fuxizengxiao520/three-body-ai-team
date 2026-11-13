@@ -174,6 +174,11 @@ bash scripts/finish_push.sh --dry-run     # 只预览将上传的文件，不需
 bash scripts/finish_push.sh --private     # 建私有仓库
 ```
 
+> **与其他项目共用同一个仓库时**：脚本会自动识别远程仓库里属于其他项目的文件，
+> 改用「增量更新」（以现有 tree 为基线，只覆盖本项目路径），**不会删掉别人的文件**；
+> 此时根目录 `README.md` 会让给对方版本，本项目说明另存为 `README-sanbot.md`。
+> 因此双击推送可以反复跑，两边互不干扰。
+
 也可以把 Token 写进项目根目录的 `.env`（已被 `.gitignore` 忽略，不会上传）：
 
 ```dotenv

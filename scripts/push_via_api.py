@@ -15,6 +15,7 @@ import argparse
 import base64
 import concurrent.futures
 import getpass
+import hashlib
 import json
 import os
 import sys
@@ -175,12 +176,14 @@ def main() -> int:
     # 共用仓库检测：远程存在本项目清单之外的文件 → 只做增量更新，绝不删别人的东西
     parent = head_sha()
     base_tree_sha: str | None = None
+    remote_blobs: dict[str, str] = {}
     shared = False
     if parent:
         head_commit = api("GET", f"/repos/{owner}/{repo}/git/commits/{parent}", token)
         base_tree_sha = head_commit["tree"]["sha"]
         remote_tree = api("GET", f"/repos/{owner}/{repo}/git/trees/{base_tree_sha}?recursive=1", token)
-        remote_paths = {x["path"] for x in remote_tree.get("tree", []) if x["type"] == "blob"}
+        remote_blobs = {x["path"]: x["sha"] for x in remote_tree.get("tree", []) if x["type"] == "blob"}
+        remote_paths = set(remote_blobs)
         local_paths = {name for name, _ in files}
         foreign = sorted(p for p in remote_paths - local_paths
                          if p not in {".gitignore", "LICENSE", ".sanbot-init", "README-sanbot.md"})
@@ -202,24 +205,37 @@ def main() -> int:
         "> 两边请各用独立路径，避免覆盖同名文件。\n\n---\n\n"
     ).encode("utf-8")
 
-    def make_blob(item: tuple[str, Path]) -> dict:
+    def git_blob_sha(data: bytes) -> str:
+        # git blob 对象的 sha1：sha1("blob <len>\\0" + 内容)
+        return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+
+    def make_blob(item: tuple[str, Path]) -> dict | None:
         name, p = item
         raw = p.read_bytes()
         if shared and name == "README.md":
             raw = SHARED_HEADER + raw
+        path = remote_name(name)
+        # 内容一致就不再重复上传，避免短时间大量写请求触发限流
+        if shared and remote_blobs.get(path) == git_blob_sha(raw):
+            return None
         content = base64.b64encode(raw).decode("ascii")
         created = api("POST", f"/repos/{owner}/{repo}/git/blobs", token,
                       {"content": content, "encoding": "base64"})
         return {
-            "path": remote_name(name),
+            "path": path,
             "mode": "100755" if p.suffix in {".sh", ".command"} else "100644",
             "type": "blob",
             "sha": created["sha"],
         }
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        tree = list(pool.map(make_blob, files))
-    print(f"   {len(tree)} 个 blob 完成")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        tree = [x for x in pool.map(make_blob, files) if x]
+    print(f"   {len(tree)} 个文件有变化，{len(files) - len(tree)} 个未变化已跳过")
+
+    if not tree and base_tree_sha:
+        print("   仓库已是最新，无需新提交。")
+        print(f"\n完成：https://github.com/{owner}/{repo}")
+        return 0
 
     print("④ 生成树与提交 …")
     tree_payload: dict = {"tree": tree}
