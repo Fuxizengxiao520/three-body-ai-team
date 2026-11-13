@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -46,26 +47,41 @@ def collect_files() -> list[tuple[str, Path]]:
 
 
 def api(method: str, path: str, token: str, payload: dict | None = None, timeout: int = 60):
+    """带轻量重试的 API 调用：代理抖动/5xx 自动重试，避免明明成功却报错。"""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(
-        path if path.startswith("http") else API_BASE + path,
-        data=data,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-            "User-Agent": "three-body-ai-team-pusher/1.0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8")
-            return json.loads(raw) if raw.strip() else {}
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")[:400]
-        raise RuntimeError(f"{method} {path} → HTTP {e.code}: {detail}") from e
+    url = path if path.startswith("http") else API_BASE + path
+    last: Exception | None = None
+    for attempt in range(3):
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Content-Type": "application/json",
+                "User-Agent": "three-body-ai-team-pusher/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode("utf-8")
+                return json.loads(raw) if raw.strip() else {}
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:400]
+            if e.code >= 500 and attempt < 2:
+                last = e
+                time.sleep(1 + attempt)
+                continue
+            raise RuntimeError(f"{method} {path} → HTTP {e.code}: {detail}") from e
+        except (TimeoutError, OSError) as e:
+            last = e
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise RuntimeError(f"{method} {path} → 网络超时（重试 3 次仍失败）：{e}") from e
+    raise RuntimeError(f"{method} {path} → 请求失败：{last}")
 
 
 def dry_run(files: list[tuple[str, Path]]) -> int:
