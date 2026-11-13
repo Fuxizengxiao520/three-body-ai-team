@@ -1,7 +1,12 @@
-state/
-config/settings.json
-.env
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+*.egg-info/
+build/
+dist/
 .venv/
+venv/
+.env
+runs/
+brief.md
+.DS_Store
+*.log
