@@ -172,16 +172,47 @@ def main() -> int:
         branch = info0.get("default_branch") or branch
         print(f"   已初始化，默认分支：{branch}")
 
+    # 共用仓库检测：远程存在本项目清单之外的文件 → 只做增量更新，绝不删别人的东西
+    parent = head_sha()
+    base_tree_sha: str | None = None
+    shared = False
+    if parent:
+        head_commit = api("GET", f"/repos/{owner}/{repo}/git/commits/{parent}", token)
+        base_tree_sha = head_commit["tree"]["sha"]
+        remote_tree = api("GET", f"/repos/{owner}/{repo}/git/trees/{base_tree_sha}?recursive=1", token)
+        remote_paths = {x["path"] for x in remote_tree.get("tree", []) if x["type"] == "blob"}
+        local_paths = {name for name, _ in files}
+        foreign = sorted(p for p in remote_paths - local_paths
+                         if p not in {".gitignore", "LICENSE", ".sanbot-init", "README-sanbot.md"})
+        shared = bool(foreign)
+        if shared:
+            print(f"   检测到共用仓库（{len(foreign)} 个其他项目文件）→ 增量更新，保留它们")
+            print(f"   例如：{', '.join(foreign[:4])}")
+
     print(f"③ 上传 {len(files)} 个文件 …")
+
+    def remote_name(name: str) -> str:
+        # 共用仓库根目录 README.md 属于另一个项目，本项目说明另存一份
+        return "README-sanbot.md" if shared and name == "README.md" else name
+
+    SHARED_HEADER = (
+        "> 本仓库由同一账号下的两个「三体 AI 团队」项目共用。\n"
+        "> 根目录 `README.md` 属于「本地最小闭环」版（`run.py` / `src/`）；\n"
+        "> 本文件属于「内容工作室 sanbot 版」（`sanbot/` / `scripts/` / `examples/`）。\n"
+        "> 两边请各用独立路径，避免覆盖同名文件。\n\n---\n\n"
+    ).encode("utf-8")
 
     def make_blob(item: tuple[str, Path]) -> dict:
         name, p = item
-        content = base64.b64encode(p.read_bytes()).decode("ascii")
+        raw = p.read_bytes()
+        if shared and name == "README.md":
+            raw = SHARED_HEADER + raw
+        content = base64.b64encode(raw).decode("ascii")
         created = api("POST", f"/repos/{owner}/{repo}/git/blobs", token,
                       {"content": content, "encoding": "base64"})
         return {
-            "path": name,
-            "mode": "100755" if p.suffix == ".sh" else "100644",
+            "path": remote_name(name),
+            "mode": "100755" if p.suffix in {".sh", ".command"} else "100644",
             "type": "blob",
             "sha": created["sha"],
         }
@@ -191,10 +222,11 @@ def main() -> int:
     print(f"   {len(tree)} 个 blob 完成")
 
     print("④ 生成树与提交 …")
-    tree_obj = api("POST", f"/repos/{owner}/{repo}/git/trees", token, {"tree": tree})
-
-    # 已有提交的仓库要挂 parent，否则会覆盖历史
-    parent = head_sha()
+    tree_payload: dict = {"tree": tree}
+    if base_tree_sha:
+        # base_tree 让 GitHub 只覆盖指定路径，其余文件原样保留
+        tree_payload["base_tree"] = base_tree_sha
+    tree_obj = api("POST", f"/repos/{owner}/{repo}/git/trees", token, tree_payload)
     commit_payload = {"message": args.message, "tree": tree_obj["sha"]}
     if parent:
         commit_payload["parents"] = [parent]
@@ -214,6 +246,8 @@ def main() -> int:
     print("⑤ 验证 …")
     info = api("GET", f"/repos/{owner}/{repo}", token)
     print(f"   {info.get('full_name')} | default_branch={info.get('default_branch')} | size={info.get('size')} KB")
+    final_tree = api("GET", f"/repos/{owner}/{repo}/git/trees/{branch}?recursive=1", token)
+    print(f"   仓库文件总数：{sum(1 for x in final_tree.get('tree', []) if x['type'] == 'blob')}")
 
     print(f"\n完成：https://github.com/{owner}/{repo}")
     print("下一步：")
