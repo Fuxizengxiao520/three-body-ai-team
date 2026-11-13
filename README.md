@@ -126,7 +126,7 @@ python3 scripts/publish_github.py --dry-run
 python3 scripts/publish_github.py
 ```
 
-首次发布时加 `--private` 建私有仓库，默认公开。脚本只读取环境变量 `GITHUB_TOKEN` 或上述文件，不会把 token 写进仓库、日志或标准输出，并在上传前校验 token 所属账号与 `--owner` 一致。脚本可重复运行，内容未变的文件自动跳过，变化的文件带 sha 更新，适合本地改动后随时同步。
+首次发布时加 `--private` 建私有仓库，默认公开。脚本只读取环境变量 `GITHUB_TOKEN` 或上述文件，不会把 token 写进仓库、日志或标准输出，并在上传前校验 token 所属账号与 `--owner` 一致。脚本可重复运行，内容未变的文件自动跳过，变化的文件带 sha 更新，适合本地改动后随时同步。网络抖动时会标记待确认文件并继续，重跑即可补齐。
 
 ## 文件结构
 
