@@ -20,7 +20,7 @@ Grok Bot 属于 xAI 的闭源商业服务，本项目为独立开源实现，与
 | 程心 | 管剪辑，复核 | 待命 |
 | 庄颜 | 盯账单行程 | 账务模块常驻，不占对话角色 |
 
-默认只跑 3 个角色。理由在文末的设计取舍里。
+确定编制为 3 个角色，不扩编。理由在文末的设计取舍里。
 
 ## 快速开始
 
@@ -81,7 +81,7 @@ python3 run.py roster
 
 ## 设计取舍
 
-* **只跑 3 个角色。** 并行 agent 的 token 消耗约为普通对话的 15 倍（来源 github.com/ashishpatel26/engineering-handbook 的 multi-agent-orchestration 章节）。16 个并行 agent 完成编译器用了约 2000 次会话与约 20000 美元（来源 anthropic.com/engineering/building-c-compiler）。角色数增加带来的协调开销增长快于质量增益，先跑通闭环再扩编更划算。
+* **确定编制为 3 个角色，不扩编。** 并行 agent 的 token 消耗约为普通对话的 15 倍（来源 github.com/ashishpatel26/engineering-handbook 的 multi-agent-orchestration 章节）。16 个并行 agent 完成编译器用了约 2000 次会话与约 20000 美元（来源 anthropic.com/engineering/building-c-compiler）。角色数增加带来的协调开销增长快于质量增益。压到 2 人时统筹只能由执行者兼任，执行与验收的分离会失效。扩编只在任务类型变化时再议。
 * **确定性拆单。** 维德的拆解用模板生成，省掉一次模型调用，同时让验收标准能被机器检查。
 * **验收与执行分离。** 维德只核对任务卡，不产出业务内容。让执行者评价自己的产出会系统性偏宽松（来源 anthropic.com/engineering/harness-design-long-running-apps）。
 * **已知局限。** 当前验收检查的是格式与可数项，语义质量、事实准确性、来源真实性仍需要人工判断，或后续接入独立评审模型。真实模型输出未必满足格式要求，验收失败属于预期行为，会拦在人工门前。
